@@ -1,0 +1,1108 @@
+拍拍贷数据分析 -- 鲁波
+========================================================
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+options(scipen=999)
+```
+
+
+```{r}
+# Load all of the packages that you end up using
+# in your analysis in this code chunk.
+# Notice that the parameter "echo" was set to FALSE for this code chunk.
+# This prevents the code from displaying in the knitted HTML output.
+# You should set echo=FALSE for all code chunks in your file.
+library(ggplot2)
+library(plyr)
+library(sf)
+library(scales)
+library(lubridate)
+library(gridExtra)
+library(RColorBrewer)
+```
+
+#加载数据并且创建数据框lcis_df
+
+```{r}
+# load data and create dataframe.
+lcis_df <- read.csv('LCIS.csv',check.names = F,fileEncoding = "UTF-8")
+```
+
+#数据整理
+
+### 查看数据结构
+```{r}
+# observe data structure
+str(lcis_df)
+```
+
+### 重命名列名
+```{r}
+# rename "ListingId" and "recorddate" columns' name. 
+colnames(lcis_df)[colnames(lcis_df)=="ListingId"] <- "贷款标的账号"
+colnames(lcis_df)[colnames(lcis_df)=="recorddate"] <- "截止日期"
+```
+
+### 查看列数据类型
+```{r}
+# display datatype of columns.
+sapply(lcis_df, class)
+```
+
+### 转换列数据类型
+```{r}
+# convert datatype of int to factor.
+lcis_df[,'贷款标的账号']<-factor(lcis_df[,'贷款标的账号'])
+```
+
+### 查看列数据分布
+```{r}
+# observe data distribution
+summary(lcis_df)
+```
+
+### 删除重复的观察行并且创建数据框lcis.data
+```{r}
+# delete duplicated rows and create dataframe.
+lcis.data <- unique(lcis_df)
+```
+
+### 查看“截止日期”列的数据分布
+```{r}
+# display column data distribution.
+summary(lcis.data$`截止日期`)
+```
+
+### 删除“截止日期”列值为非[2016/10/31,2016/11/30,2016/12/31,2016/9/30,2017/2/28]行
+```{r}
+# delete rows with column of specific value.
+lcis.data <- subset(lcis.data,
+                    `截止日期` %in% names(sort(table(lcis.data$`截止日期`),
+                                           decreasing = T)[0:5]))
+```
+
+### 检查上述删除过程的结果
+```{r}
+# check the result of process above.
+summary(lcis.data$`截止日期`)
+```
+
+### 将“截止日期”列新增为2016/10/31,2016/11/30,2016/12/31,2016/9/30,2017/2/28列，且列值为标当前逾期天数，并且依据“贷款账号”合并数据行后创建数据框lcis.wide.
+```{r}
+# convert column "截止日期" of lcis.data to wide format 
+# and create a new dataframe.
+lcis.wide <- reshape(data=lcis.data,idvar="贷款标的账号",
+                          v.names = "标当前逾期天数",
+                          timevar = "截止日期",
+                          direction="wide")
+```
+
+### 为上述新创建的列用0填充NA.
+```{r}
+# fill new created columns NAs with 0
+select_var <- c("标当前逾期天数.2016/12/31","标当前逾期天数.2017/2/28",
+                "标当前逾期天数.2016/11/30","标当前逾期天数.2016/10/31",
+                "标当前逾期天数.2016/9/30")
+lcis.wide[select_var][is.na(lcis.wide[select_var])] <- 0
+
+```
+
+### 创建'贷款标的统计日期逾期天数和'列且列值为“标当前逾期天数.2016/12/31”列、“标当前逾期天数.2017/2/28”列、“标当前逾期天数.2016/11/30”列、“标当前逾期天数.2016/10/31”列、“标当前逾期天数.2016/9/30”列列值之和
+```{r}
+# add 5 columns value to create a new column.
+lcis.wide$`贷款标的统计日期逾期天数和` <- lcis.wide$`标当前逾期天数.2016/12/31`+
+  lcis.wide$`标当前逾期天数.2017/2/28`+
+  lcis.wide$`标当前逾期天数.2016/11/30`+ 
+  lcis.wide$`标当前逾期天数.2016/10/31`+ 
+  lcis.wide$`标当前逾期天数.2016/9/30`
+```
+
+###  检查“手机认证”、“户口认证”、“视频认证”、“学历认证”、“征信认证”、“淘宝认证”列值
+```{r}
+# check the levels of specific columns.
+levels(lcis.wide$`手机认证`)
+levels(lcis.wide$`户口认证`)
+levels(lcis.wide$`视频认证`)
+levels(lcis.wide$`学历认证`)
+levels(lcis.wide$`征信认证`)
+levels(lcis.wide$`淘宝认证`)
+```
+
+### 替换“手机认证”、“户口认证”、“视频认证”、“学历认证”、“征信认证”、“淘宝认证”列值为0,1数值
+```{r}
+# change the value of different levels of specific columns.
+lcis.wide$`手机认证` <- revalue(lcis.wide$`手机认证`,
+                            c("成功认证"="1", "其他"="0","未成功认证"="0",
+                              "未婚"="0","已婚"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+lcis.wide$`户口认证` <- revalue(lcis.wide$`户口认证`,
+                            c("成功认证"="1","本科"="0","初中及以下"="0",
+                              "大专"="0","高中"="0","未成功认证"="0","未填"="0",
+                              "研究生或以上"="0","中专"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+lcis.wide$`视频认证` <- revalue(lcis.wide$`视频认证`, 
+                            c("成功认证"="1","未成功认证"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+lcis.wide$`学历认证` <- revalue(lcis.wide$`学历认证`, 
+                            c("成功认证"="1","未成功认证"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+lcis.wide$`征信认证` <- revalue(lcis.wide$`征信认证`, 
+                            c("成功认证"="1","未成功认证"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+lcis.wide$`淘宝认证` <- revalue(lcis.wide$`淘宝认证`, 
+                            c("成功认证"="1","未成功认证"="0")) %>% 
+  as.character() %>% 
+  as.numeric()
+```
+
+### 检查上述替换过程结果
+```{r}
+# check the result of process above.
+select_var1 <- c("手机认证","户口认证","视频认证","学历认证","征信认证","淘宝认证")
+str(lcis.wide[select_var1])
+```
+
+### 创建'认证数量'列且列值为“手机认证”列、“户口认证”列、“视频认证”列、“学历认证”列、“征信认证”列、“淘宝认证”列值之和
+```{r}
+# add 5 columns value to create a new column.
+lcis.wide$`认证数量` <- lcis.wide$`手机认证` + 
+  lcis.wide$`户口认证` + 
+  lcis.wide$`视频认证` + 
+  lcis.wide$`学历认证` + 
+  lcis.wide$`征信认证` + 
+  lcis.wide$`淘宝认证`
+```
+
+### 将“手机认证”、“户口认证”、“视频认证”、“学历认证”、“征信认证”、“淘宝认证”列值转换为factor类型，便于绘图。
+```{r}
+# change the datatype of columns.
+lcis.wide$`手机认证` <- as.factor(lcis.wide$`手机认证`)
+lcis.wide$`户口认证` <- as.factor(lcis.wide$`户口认证`)
+lcis.wide$`视频认证` <- as.factor(lcis.wide$`视频认证`)
+lcis.wide$`学历认证` <- as.factor(lcis.wide$`学历认证`)
+lcis.wide$`征信认证` <- as.factor(lcis.wide$`征信认证`)
+lcis.wide$`淘宝认证` <- as.factor(lcis.wide$`淘宝认证`)
+```
+
+### 删除不分析的数据列并且创建数据框lcis.ana
+```{r}
+# delete columns and create a new dataframe to analysis.
+select_var2 <- names(lcis.wide) %in% 
+  c("当前到期期数","当前还款期数","已还本金","已还利息","待还本金","待还利息",
+    "标当前状态","上次还款日期","上次还款本金","上次还款利息",
+    "下次计划还款日期","下次计划还款本金","下次计划还款利息")
+lcis.ana <- lcis.wide[!select_var2]
+```
+
+### 更改‘历史成功借款次数’列、‘历史成功借款金额’列数据类型为数值
+```{r}
+# change the datatype of column.
+lcis.ana$`历史成功借款次数`<- as.numeric(lcis.ana$`历史成功借款次数`)
+lcis.ana$`历史成功借款金额`<- as.numeric(lcis.ana$`历史成功借款金额`)
+```
+
+### 创建贷款标的逾期的数据框
+```{r}
+# create the dataframe.
+lcis.out <- subset(lcis.ana,`贷款标的统计日期逾期天数和` > 0)
+```
+
+### 创建贷款标的不逾期的数据框
+```{r}
+# create the dataframe.
+lcis.in <- subset(lcis.ana,`贷款标的统计日期逾期天数和` == 0)
+```
+
+# 单变量绘图选择
+
+### 1.年龄
+```{r}
+ggplot(data = lcis.ana, aes(x = `年龄`)) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),binwidth = 2)+
+  scale_x_continuous(breaks = seq(0,60,2))+
+  coord_cartesian(xlim =c(0,60))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的年龄分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+
+summary(lcis.ana$`年龄`)
+```
+
+1.结论:大多数借款人的年龄在21-35岁之间.
+
+### 2.性别
+```{r}
+ggplot(data = lcis.ana, aes(x = `性别`)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的性别分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+table(lcis.ana$`性别`)
+```
+
+2.结论:男性借款人多于女性，约占65%.
+
+### 3.借款金额
+```{r}
+ggplot(data = lcis.ana, aes(x = `借款金额`)) +
+  geom_histogram(binwidth = 300,aes(y = (..count..)/sum(..count..)))+
+  coord_cartesian(xlim =c(0,quantile(lcis.ana$`借款金额`,0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的借款金额分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.out$`借款金额`)
+```
+
+3.结论:借款金额多分布于2500-6500元.
+
+### 4.借款期限
+```{r}
+ggplot(data = lcis.ana, aes(x = `借款期限`)) +
+  geom_histogram(binwidth = 1,aes(y = (..count..)/sum(..count..)))+
+  scale_x_continuous(breaks = seq(0,26,1))+
+  coord_cartesian(xlim =c(0,26))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的借款期限分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`借款期限`)
+```
+4.结论:借款期限多分布于6月、12月，共约占85%.
+
+### 5.借款利率
+```{r}
+ggplot(data = lcis.ana, aes(x = `借款利率`)) +
+  geom_histogram(binwidth = 0.5,aes(y = (..count..)/sum(..count..)))+
+  scale_x_continuous(breaks = seq(0,26,1))+
+  coord_cartesian(xlim =c(0,26))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的借款利率分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`借款利率`)
+```
+
+5.结论:借款利率多分布于16%、18%、20%、22%，共约占85%.
+
+### 6.初始评级
+```{r}
+ggplot(data = lcis.ana, aes(x = `初始评级`)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的初始评级分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+table(lcis.ana$`初始评级`)
+```
+
+6.结论:初始评级多分布于B、C、AA，共约占83%.
+
+### 7.借款类型
+```{r}
+ggplot(data = lcis.ana, aes(x = `借款类型`)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的借款类型分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+table(lcis.ana$`借款类型`)
+```
+
+7.结论:借款类型多分布于普通、其他、APP闪电，共约占97%.
+
+### 8.认证数量
+```{r}
+ggplot(data = lcis.ana, aes(x = `认证数量`)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的认证数量分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+table(lcis.ana$`认证数量`)
+```
+
+8.结论:认证数量型多分布于1、2、0，共约占90%.
+
+### 9.历史成功借款次数
+```{r}
+ggplot(data = lcis.ana, aes(x = `历史成功借款次数`)) +
+  geom_histogram(binwidth = 0.5,aes(y = (..count..)/sum(..count..)))+
+  scale_x_continuous(breaks = seq(0,86,3))+
+  coord_cartesian(xlim =c(0,86))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的历史成功借款次数分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(sort(lcis.ana$`历史成功借款次数`))
+```
+
+9.结论:历史成功借款次数多分布于1、2、25、41，共约占75%.
+
+### 10.历史成功借款金额
+```{r}
+ggplot(data = lcis.ana, aes(x = `历史成功借款金额`)) +
+  geom_histogram(binwidth = 200,aes(y = (..count..)/sum(..count..)))+
+  scale_x_continuous(breaks = seq(0,20000,2000))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的历史成功借款金额分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`历史成功借款金额`)
+```
+
+10.结论:历史成功借款金额除0元约占25%外，其余0-19000元均匀分布。
+
+### 11.历史正常还款期数
+```{r}
+ggplot(data = lcis.ana, 
+       aes(x = `历史正常还款期数`)) +
+  geom_histogram(binwidth = 2,aes(y = (..count..)/sum(..count..)))+
+  scale_x_continuous(breaks = seq(0,quantile(lcis.ana$`历史正常还款期数`,
+                                             0.99),2))+
+  coord_cartesian(xlim =c(0,quantile(lcis.ana$`历史正常还款期数`,0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的历史正常还款期数分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`历史正常还款期数`)
+```
+
+11.结论:历史正常还款期数除0元约占25%外，其余从0到70依次递减。
+
+### 12.历史逾期还款期数
+```{r}
+ggplot(data = lcis.ana, 
+       aes(x = `历史逾期还款期数`)) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)))+
+  coord_cartesian(xlim = c(0,quantile(lcis.ana$`历史逾期还款期数`,0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的历史逾期还款期数分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`历史逾期还款期数`)
+
+```
+
+12.结论:历史逾期还款期数多分布于0，约占82%。
+
+### 13.贷款标的我的投资金额
+```{r}
+ggplot(data = lcis.ana, 
+       aes(x = `我的投资金额`)) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),binwidth = 50)+
+  scale_x_continuous(breaks = seq(0,quantile(lcis.ana$`我的投资金额`,0.99),50))+
+  coord_cartesian(xlim = c(0,quantile(lcis.ana$`我的投资金额`,0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的我的投资金额分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`我的投资金额`)
+```
+
+13.结论:我的投资金额多分布于50元，约占80%。
+
+### 14.是否首标
+```{r}
+ggplot(data = lcis.ana, aes(x = `是否首标`)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的是否首标分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+table(lcis.ana$`是否首标`)
+```
+
+14.结论:贷款标的多分布于非首标，约占78%。
+
+### 15.借款成功日期-月份
+```{r}
+ggplot(data = lcis.ana, aes(x = month(`借款成功日期`))) +
+  scale_x_continuous(breaks = seq(1,12,1)) +
+  geom_histogram(binwidth = 0.5,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的借款成功日期-月份分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+15.结论:贷款标的借款成功日期-月份从2月到8月份，比例逐渐增加，1月、8月、10月、12月此四月份约占40%。
+
+### 16.手机认证、户口认证、视频认证、学历认证、征信认证、淘宝认证
+```{r}
+
+p1 <- ggplot(data = lcis.ana, aes(x = factor(`手机认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "手机认证分布", y = "比例",x="手机认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(data = lcis.ana, aes(x = factor(`户口认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "户口认证分布", y = "比例",x="户口认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(data = lcis.ana, aes(x = factor(`视频认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "视频认证分布", y = "比例",x="视频认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p4 <- ggplot(data = lcis.ana, aes(x = factor(`学历认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "学历认证分布", y = "比例",x="学历认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p5 <- ggplot(data = lcis.ana, aes(x = factor(`征信认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "征信认证分布", y = "比例",x="征信认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p6 <- ggplot(data = lcis.ana, aes(x = factor(`淘宝认证`))) +
+  geom_bar(aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "淘宝认证分布", y = "比例",x="淘宝认证与否")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(p1,p2,p3,p4,p5,p6,ncol=2)
+``` 
+
+16.结论:认证方式多分布于学历认证、手机认证。
+
+### 17.标当前逾期天数.2016/12/31、标当前逾期天数.2017/2/28、标当前逾期天数.2016/11/30、标当前逾期天数.2016/10/31、标当前逾期天数.2016/9/30
+```{r}
+p1 <- ggplot(data = lcis.ana, aes(x = `标当前逾期天数.2016/9/30`)) +
+  geom_histogram(binwidth= 30,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "标当前逾期天数.2016/9/30分布", y = "比例",x="标当前逾期天数.2016/9/30")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- ggplot(data = lcis.ana, aes(x = `标当前逾期天数.2016/10/31`)) +
+  geom_histogram(binwidth= 30,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "标当前逾期天数.2016/10/31分布", y = "比例",x="标当前逾期天数.2016/10/31")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p3 <- ggplot(data = lcis.ana, aes(x = `标当前逾期天数.2016/11/30`)) +
+  geom_histogram(binwidth= 30,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "标当前逾期天数.2016/11/30分布", y = "比例",x="标当前逾期天数.2016/11/30")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p4 <- ggplot(data = lcis.ana, aes(x = `标当前逾期天数.2016/12/31`)) +
+  geom_histogram(binwidth= 30,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "标当前逾期天数.2016/12/31分布", y = "比例",x="标当前逾期天数.2016/12/31")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+p5 <- ggplot(data = lcis.ana, aes(x = `标当前逾期天数.2017/2/28`)) +
+  geom_histogram(binwidth= 30,aes(y = (..count..)/sum(..count..)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "标当前逾期天数.2017/2/28分布", y = "比例",x="标当前逾期天数.2017/2/28")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+grid.arrange(p1,p2,p3,p4,p5,ncol=2)
+```
+
+17.结论:认证方式多分布于学历认证、手机认证。
+
+###18.贷款标的统计日期逾期天数和
+```{r}
+ggplot(data = lcis.ana, aes(x = `贷款标的统计日期逾期天数和`))+
+  geom_histogram(aes(y = (..count..)/sum(..count..)))+
+  coord_cartesian(xlim= c(0,quantile(lcis.ana$`贷款标的统计日期逾期天数和`,
+                                     0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的统计日期逾期天数和分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`贷款标的统计日期逾期天数和`)
+```
+
+18.结论:贷款标的统计日期逾期天数和分布于0、约占95%。
+
+### 19.总待还本金
+```{r}
+ggplot(data = lcis.ana, 
+       aes(x = `总待还本金`)) +
+  geom_histogram(aes(y = (..count..)/sum(..count..)),binwidth = 1500)+
+  scale_x_continuous(breaks = seq(0,quantile(lcis.ana$`总待还本金`,0.99),1500))+
+  coord_cartesian(xlim = c(0,quantile(lcis.ana$`总待还本金`,0.99)))+
+  scale_y_continuous(labels = percent)+
+  labs(title = "贷款标的总待还本金分布", y = "比例")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+summary(lcis.ana$`总待还本金`)
+```
+
+19.结论:总待还本金分布于0-8000元、其中0元约占30%。
+
+# 单变量分析
+
+### 你的数据集结构是什么？
+
+1）67388个观察对象，29个变量。分别为：贷款标的账号、借款金额、借款期限、借款利率、借款成功日期、初始评级、借款类型、是否首标、年龄、性别、手机认证、户口认证、视频认证、学历认证、征信认证、淘宝认证、历史成功借款次数、历史成功借款金额、总待还本金、历史正常还款期数、历史逾期还款期数、我的投资金额、标当前逾期天数.2016/12/31、标当前逾期天数.2017/2/28、标当前逾期天数.2016/11/30、标当前逾期天数.2016/10/31、标当前逾期天数.2016/9/30、贷款标的统计日期逾期天数和、认证数量。
+
+### 你的数据集内感兴趣的主要特性有哪些？
+
+1）我感兴趣的特征为借款金额，我想探索借款金额哪些特征相关。我的投资金额、借款期限、借款利率、初始评级、年龄、性别、历史成功借款次数、历史成功借款金额、总待还本金、历史正常还款期数、历史逾期还款期数、认证数量、贷款标的统计日期逾期天数和、是否首标、借款类型、借款成功日期(月份)
+
+### 你认为数据集内哪些其他特征可以帮助你探索兴趣特点？
+
+1）借款期限、借款利率、初始评级、年龄、性别、历史成功借款次数、历史成功借款金额、总待还本金、历史正常还款期数、历史逾期还款期数、认证数量、贷款标的统计日期逾期天数和、是否首标、借款类型、我的投资金额、借款成功日期(月份)。
+
+### 根据数据集内已有变量，你是否创建了任何新变量？
+
+1）创建“认证数量”列，列值为贷款标的完成的6种认证的数量和。
+2）创建“贷款标的统计日期逾期天数和”列，列值为“标当前逾期天数.2016/12/31”列、“标当前逾期天数.2017/2/28”列、“标当前逾期天数.2016/11/30”列、“标当前逾期天数.2016/10/31”列、“标当前逾期天数.2016/9/30”列之和。
+
+### 在已经探究的特性中，是否存在任何异常分布？你是否对数据进行一些操作，如清洁、调整或改变数据的形式？如果是，你为什么会这样做？
+
+1）重命名列名(“ListingId”,“recorddate”)为("贷款标的账号","截止日期")，便于绘图。
+2）转换"贷款标的账号"列的数据类型为factor，便于合并。
+3）删除重复的观察行，保证统计准确性。
+4）删除“截止日期”列值为非[2016/10/31,2016/11/30,2016/12/31,2016/9/30,2017/2/28]行，便于后续long转换为wide。
+5）将“截止日期”列新增为2016/10/31,2016/11/30,2016/12/31,2016/9/30,2017/2/28列，且列值为标当前逾期天数，并且依据“贷款账号”合并数据行后创建数据框lcis.wide，并且为上述新创建的列用0填充NA，减少观察行数量并且找出重复观察行不同值作为列值，便于比较研究。
+6）替换“手机认证”、“户口认证”、“视频认证”、“学历认证”、“征信认证”、“淘宝认证”列值为0,1数值；将“手机认证”、“户口认证”、“视频认证”、“学历认证”、“征信认证”、“淘宝认证”列值转换为factor类型，便于绘图。
+7）删除不分析的数据列(“当前到期期数”、“当前还款期数”、“已还本金”、“已还利息”、“待还本金”、“待还利息”、“标当前状态”、“上次还款日期”、“上次还款本金”、“上次还款利息”、“下次计划还款日期”、“下次计划还款本金”、“下次计划还款利息”)
+8）更改‘历史成功借款次数’列、‘历史成功借款金额’列数据类型为数值，便于统计分析。
+9)历史正常还款期数、借款金额、历史逾期还款期数、我的投资金额、贷款标的统计日期逾期天数和、总待还本金均存在异常分布的情况，因此均过滤掉99%以上的记录。
+
+# 双变量绘图选择
+
+### 1.我的投资金额 
+```{r}
+ggplot(data=lcis.ana,aes(x=`我的投资金额`,y=`借款金额`))+
+  geom_jitter(alpha=1/20)+
+  scale_y_log10()+
+  scale_x_continuous(breaks = seq(0,max(lcis.ana$`我的投资金额`),100))
+```
+
+1.结论：我的投资金额集中在50、100、200、300、400、500，随着我的投资金额逐渐增多，借款金额分范围逐渐变窄相对集中。
+
+### 2.借款期限
+```{r}
+ggplot(data=lcis.ana,aes(x=factor(`借款期限`),y=`借款金额`))+
+  geom_boxplot()+
+  scale_y_log10()
+```
+
+2.结论：借款期限在15月以下，借款金额分布范围变化不大且相对集中；借款期限在15月-24月，借款金额集中分布较高。
+
+### 3.总待还本金
+```{r}
+ggplot(data=lcis.ana,aes(x=`总待还本金`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  coord_cartesian(xlim=c(0,quantile(lcis.ana$`总待还本金`,0.97)),
+                  ylim=c(0,quantile(lcis.ana$`借款金额`,0.97)))
+```
+
+3.结论：总待还本金为0时，借款金额分布范围较宽；总待还本金从0逐渐增大，借款金额分布范围集中减少。
+
+### 4.历史成功借款次数
+```{r}
+ggplot(data=lcis.ana,aes(x=`历史成功借款次数`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()
+```
+
+4.结论：历史成功借款次数与借款金额相关性不强。
+
+### 5.历史成功借款金额
+```{r}
+ggplot(data=lcis.ana,aes(x=`历史成功借款金额`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()
+```
+
+5.结论：历史成功借款金额与借款金额相关性不强。
+
+### 6.历史正常还款期数
+```{r}
+ggplot(data=lcis.ana,aes(x=`历史正常还款期数`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  coord_cartesian(xlim=c(0,250))+
+  scale_y_log10()
+```
+
+6.结论：历史正常还款期数与借款金额相关性不强。
+
+### 7.历史逾期还款期数
+```{r}
+ggplot(data=lcis.ana,aes(x=`历史逾期还款期数`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()
+```
+
+7.结论：历史逾期还款期数为0期，借款金额分布范围较宽；历史逾期还款期数从0逐渐增大，借款金额分布范围集中减少。
+
+### 8.借款利率
+```{r}
+ggplot(data=lcis.ana,aes(x=`借款利率`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()
+```
+
+8.结论：借款利率与借款金额相关性不强。
+
+### 9.初始评级
+```{r}
+ggplot(data=lcis.ana,aes(x=`初始评级`,y=`借款金额`))+
+  geom_boxplot()+
+  scale_y_log10()
+```
+
+9.结论：除安全标AAA及赔标AA外，其余随初始评级降低，借款金额范围中值逐渐降低。
+
+### 10.借款类型
+```{r}
+ggplot(data=lcis.ana,aes(x=`借款类型`,y=`借款金额`))+
+  scale_y_log10()+
+  geom_boxplot()
+```
+
+10.结论：借款类型为电商、应收安全标的借款金额较高，其余借款类型的借款金额相对稳定。
+
+### 11.是否首标
+```{r}
+ggplot(data=lcis.ana,aes(x=`是否首标`,y=`借款金额`))+
+  geom_boxplot()+
+  scale_y_log10()
+
+```
+
+11.结论：是否首标与借款金额相关性不强。
+
+### 12.年龄
+```{r}
+ggplot(data=lcis.ana,aes(x=`年龄`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()+
+  scale_x_continuous(breaks = seq(0,max(lcis.ana$`年龄`),2))
+```
+
+12.结论：年龄与借款金额相关性不强。
+
+### 13.性别
+```{r}
+ggplot(data=lcis.ana,aes(x=`性别`,y=`借款金额`))+
+  geom_boxplot()+
+  scale_y_log10()
+```
+
+13.结论：性别与借款金额相关性不强。
+
+### 14.认证数量
+```{r}
+ggplot(data=lcis.ana,aes(x=factor(`认证数量`),y=`借款金额`))+
+    scale_y_log10()+ 
+  geom_boxplot()
+```
+
+14.结论：借款金额分布随认证数量的增加而逐步增加，呈现相关性。
+
+### 15.贷款标的统计日期逾期天数和
+```{r}
+ggplot(data=lcis.ana,aes(x=`贷款标的统计日期逾期天数和`,y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()+
+  coord_cartesian(xlim=c(0,200))
+```
+
+15.结论：贷款标的统计日期逾期天数和为0，借款金额分布范围较宽；贷款标的统计日期逾期天数和从0逐渐增大，借款金额分布范围相对集中减少。
+
+### 16.贷款标的借款成功日期-月份
+```{r}
+ggplot(data=lcis.ana,aes(x=month(`借款成功日期`),y=`借款金额`))+
+  geom_jitter(alpha=1/20,position = position_jitter(w=0))+
+  scale_y_log10()
+```
+
+16.结论：借款成功日期-月份与借款金额相关性不强。
+
+# 双变量分析
+
+### 探讨你在这部分探究中观察到的一些关系。这些感兴趣的特性与数据集内其他特性有什么区别？
+1）借款类型为电商、应收安全标的借款金额较高，其余借款类型的借款金额相对稳定。
+2）借款金额分布随认证数量的增加而逐步增加，呈现相关性。
+3）除安全标AAA及赔标AA外，其余随初始评级降低，借款金额范围中值逐渐降低。
+4）总待还本金为0时，借款金额分布范围较宽；总待还本金从0逐渐增大，借款金额分布范围集中减少。
+5）我的投资金额集中在50、100、200、300、400、500，随着我的投资金额逐渐增多，借款金额分范围逐渐变窄相对集中。
+6）借款期限在15月以下，借款金额分布范围变化不大且相对集中；借款期限在15月-24月，借款金额集中分布较高。
+7）历史逾期还款期数为0期，借款金额分布范围较宽；历史逾期还款期数从0逐渐增大，借款金额分布范围集中减少。
+上述分析关系涉及连续变量（借款金额、我的投资金额、总待还本金）和离散变量（初始评级、认证数量、借款类型、借款期限、历史逾期还款期数）
+
+### 你是否观察到主要特性与其他特性之间的有趣关系？
+1）借款金额和总待还本金在一定范围内存在等斜率的线性关系，需进一步研究。
+
+### 你发现最强的关系是什么？
+1）借款金额和总待还本金在一定范围内存在等斜率线性关系
+
+# 多变量绘图选择
+
+### 1 借款金额(y)-我的投资金额(x)（初始评级/认证数量/借款类型）
+```{r}
+ggplot(data=lcis.ana,aes(x=`我的投资金额`,y=`借款金额`))+
+  geom_point(aes(color=`借款类型`),size = 0.5)+
+  xlim(0,500)+
+  ylim(0,quantile(lcis.ana$`借款金额`,0.97))+
+  scale_color_brewer(aes(color=factor(`借款类型`)),type = 'seq',
+                     guide = guide_legend(title = '借款类型', reverse = F,
+                                          override.aes = list(alpha = 1, 
+                                                              size = 1))) +
+  facet_grid(`初始评级`~`认证数量`)+
+  theme_dark()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+1 结论：认证数量为5、6及初始评级为AAA、F、E我的投资金额均分布较少或没有分布；初始评级为AA及借款类型为APP闪电、普通的我的投资金额范围较广为0-500，其余初始评级及借款类型的我的投资金额分布范围较窄约为0-200。
+
+### 2 借款金额(y)-总待还本金(x)（初始评级/认证数量/借款类型）
+```{r}
+ggplot(data=lcis.ana,aes(x=`总待还本金`,y=`借款金额`))+
+  geom_point(aes(color=`借款类型`),size = 0.5)+
+  xlim(0,quantile(lcis.ana$`总待还本金`,0.97))+
+  ylim(0,quantile(lcis.ana$`借款金额`,0.97))+
+  scale_color_brewer(aes(color=factor(`借款类型`)),type = 'seq',
+                     guide = guide_legend(title = '借款类型',reverse = F,
+                                          override.aes = list(alpha = 1, 
+                                                              size = 1)))+  
+  facet_grid(`初始评级`~`认证数量`)+
+  theme_dark()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+2 结论：认证数量为5、6及初始评级为AAA、F、E总待还本金均分布较少或没有分布；初始评级为AA及借款类型为普通的总待还本金区域为集中在总待还本金（0-1000）及借款金额（0-15000），其余初始评级及借款类型的总待还本金分布范围较广。
+
+### 3 借款金额(y)-借款期限(x)（初始评级/认证数量/借款类型）
+```{r}
+ggplot(data=lcis.ana,aes(x=`借款期限`,y=`借款金额`))+
+  geom_point(aes(color=`借款类型`),size = 0.5)+
+  xlim(0,24)+
+  ylim(0,quantile(lcis.ana$`借款金额`,0.97))+
+  scale_color_brewer(aes(color=factor(`借款类型`)),type = 'seq',
+                     guide = guide_legend(title = '借款类型', reverse = F,
+                                          override.aes = list(alpha = 1, 
+                                                              size = 1)))+  
+  facet_grid(`初始评级`~`认证数量`)+
+  theme_dark()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+3 结论：认证数量为5、6及初始评级为AAA、F、E借款期限均分布较少或没有分布；借款期限分布呈现分离的现状特点，除初始评级为AA的借款期限主要集中在5-15之间；初始评级为AA的借款期限分布范围最广，约为5-20。
+
+### 4 借款金额(y)-历史逾期还款期数(x)（初始评级/认证数量/借款类型）
+```{r}
+ggplot(data=lcis.ana,aes(x=`历史逾期还款期数`,y=`借款金额`))+
+  geom_point(aes(color=`借款类型`),size = 0.5)+
+  xlim(0,30)+
+  ylim(0,quantile(lcis.ana$`借款金额`,0.97))+
+  scale_color_brewer(aes(color=factor(`借款类型`)),type = 'seq',
+                     guide = guide_legend(title = '借款类型', reverse = F,
+                                          override.aes = list(alpha = 1, 
+                                                              size = 1)))+  
+  facet_grid(`初始评级`~`认证数量`)+
+  theme_dark()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+4 结论：认证数量为5、6及初始评级为AAA、F、E历史逾期还款期数均分布较少或没有分布；历史逾期还款期数分布呈现三角形的现状特点，即均集中在历史逾期还款期数为0-20且借款金额集中在0-15000。
+
+### 5 借款金额(y)-总待还本金(x)（认证数量）
+```{r}
+ggplot(data=lcis.ana,
+       aes(x=`总待还本金`,y=`借款金额`,color=factor(`认证数量`)))+
+  geom_jitter(aes(color=factor(`认证数量`)),alpha=1/10,size = 0.5, 
+              position = 'jitter')+
+  coord_cartesian(xlim=c(0,quantile(lcis.ana$`总待还本金`,0.97)),
+                  ylim=c(0,quantile(lcis.ana$`借款金额`,0.97)))+
+  scale_color_brewer(type = 'div',
+                     guide = guide_legend(title = '认证数量', reverse = T,
+                                          override.aes = list(alpha = 1, 
+                                                              size = 1)))+
+  theme_light()
+```
+
+5 结论：总待还本金为0时，借款金额分布没有界限；随着总待还本金逐步增加及认证数量为1或0时，借款金额分布呈现倾斜带状分布且斜率大致相同。
+
+### 6 借款金额/总待还本金 (y)-总待还本金(x)
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                               0.97)) & 
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,
+                                                0.97))),
+       aes(x=`总待还本金`,y=`借款金额`/ `总待还本金`))+
+  geom_point(size=0.5)+
+  scale_y_continuous(breaks = seq(0,40,2),limits =c(0,40))+
+  scale_x_continuous(breaks = seq(0,17500,2500),limits =c(0,17500))+
+  geom_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 1,color="green")+
+  geom_vline(xintercept = 2500,color="green")
+  
+```
+
+6 结论：以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间。
+
+### 7 借款金额/总待还本金 (y)-总待还本金(x)（初始评级）
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                               0.97)) & 
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,
+                                                0.97))),
+       aes(x=`总待还本金`,y=`借款金额`/ `总待还本金`))+
+  geom_point(size=0.5)+
+  scale_y_continuous(breaks = seq(0,20,2),limits =c(0,20))+
+  scale_x_continuous(breaks = seq(0,17500,2500),limits =c(0,17500))+
+  geom_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 1,color="green")+
+  geom_vline(xintercept = 2500,color="green")+
+  facet_wrap(~`初始评级`,ncol=2)+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+```
+
+7 结论：以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间；上述结论在不同的初始评级水平中保持一致。
+
+### 8 借款金额/总待还本金 (y)-总待还本金(x)（认证数量）
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                               0.97)) &
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,
+                                                0.97))),
+       aes(x=`总待还本金`,y=`借款金额`/ `总待还本金`))+
+  geom_point(size=0.5)+
+  scale_y_continuous(breaks = seq(0,20,2),limits =c(0,20))+
+  scale_x_continuous(breaks = seq(0,17500,2500),limits =c(0,17500))+
+  geom_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 2,color="green")+
+  geom_vline(xintercept = 2500,color="green")+
+  facet_wrap(~`认证数量`,ncol=2)+  
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+  
+```
+
+8 结论：以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间；上述结论在不同的认证数量水平中保持一致。
+
+### 9 借款金额/ 历史逾期还款期数 (y)-历史逾期还款期数(x)
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`历史逾期还款期数`,y=`借款金额`/ `历史逾期还款期数`))+
+  geom_point(size=0.5)+
+  coord_cartesian(ylim = c(0,2500))+
+  scale_y_continuous(breaks = seq(0,22500,50),limits =c(0,22500))+
+  scale_x_continuous(breaks = seq(0,30,1),limits =c(0,30))+
+  stat_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 200,color="green")
+
+```
+
+9 结论：以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。
+
+### 10 借款金额/ 历史逾期还款期数 (y)-历史逾期还款期数(x)(初始评级)
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`历史逾期还款期数`,y=`借款金额`/ `历史逾期还款期数`))+
+  geom_point(size=0.5)+
+  coord_cartesian(ylim = c(0,2500))+
+  scale_y_continuous(breaks = seq(0,22500,250),limits =c(0,22500))+
+  scale_x_continuous(breaks = seq(0,30,1),limits =c(0,30))+
+  stat_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 200,color="green")+
+  geom_vline(xintercept = 5,color="green")+
+  geom_vline(xintercept = 11,color="green")+
+  geom_vline(xintercept = 17,color="green")+
+  facet_wrap(~`初始评级`,ncol=2)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+10 结论：以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。上述结论在初始评级水平为AA、B、C、D中保持一致,在其余初始评级水平大致保持一致。
+
+### 11 借款金额/ 历史逾期还款期数 (y)-历史逾期还款期数(x)(认证数量)
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`历史逾期还款期数`,y=`借款金额`/ `历史逾期还款期数`))+
+  geom_point(size=0.5)+
+  coord_cartesian(ylim = c(0,2500))+
+  scale_y_continuous(breaks = seq(0,22500,250),limits =c(0,22500))+
+  scale_x_continuous(breaks = seq(0,30,1),limits =c(0,30))+
+  stat_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 200,color="green")+
+  geom_vline(xintercept = 5,color="green")+
+  geom_vline(xintercept = 11,color="green")+
+  geom_vline(xintercept = 17,color="green")+
+  facet_wrap(~`认证数量`,ncol=2)+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+11 结论：以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。上述结论在认证数量为1、2、3、4中保持一致,在其余认证数量大致保持一致。
+
+### 12 借款金额/总待还本金 (y)-借款金额/ 历史逾期还款期数(x)
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                                 0.97)) &
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`借款金额`/ `历史逾期还款期数`,y=`借款金额`/ `总待还本金`))+
+geom_jitter(size=0.5,color="lightblue")+
+coord_cartesian(ylim = c(0,10),xlim = c(0,10000))+
+scale_y_continuous(breaks = seq(0,10,0.5))+
+scale_x_continuous(breaks = seq(0,10000,250))+
+theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+geom_density_2d()+
+stat_density2d(aes(alpha = ..density..), geom = "raster", contour = FALSE)
+```
+
+12 结论：以借款金额/历史逾期还款期数的比值为X轴，以借款金额/总待还本金的比值为Y轴，绘制密度分布图。密度图呈现垂直带状分布特点，即数据集中在x<1250且y<1范围内。
+
+# 多变量分析
+
+### 探讨你在这部分探究中观察到的一些关系。通过观察感兴趣的特性，是否存在相互促进的特性？
+1）认证数量为5、6及初始评级为AAA、F、E我的投资金额均分布较少或没有分布；初始评级为AA及借款类型为APP闪电、普通的我的投资金额范围较广为0-500，其余初始评级及借款类型的我的投资金额分布范围较窄约为0-200。
+2）认证数量为5、6及初始评级为AAA、F、E总待还本金均分布较少或没有分布；初始评级为AA及借款类型为普通的总待还本金区域为集中在总待还本金（0-1000）及借款金额（0-15000），其余初始评级及借款类型的总待还本金分布范围较广。
+3）认证数量为5、6及初始评级为AAA、F、E借款期限均分布较少或没有分布；借款期限分布呈现分离的现状特点，除初始评级为AA的借款期限主要集中在5-15之间；初始评级为AA的借款期限分布范围最广，约为5-20。
+4）认证数量为5、6及初始评级为AAA、F、E历史逾期还款期数均分布较少或没有分布；历史逾期还款期数分布呈现三角形的现状特点，即均集中在历史逾期还款期数为0-20且借款金额集中在0-15000。
+5）总待还本金为0时，借款金额分布没有界限；随着总待还本金逐步增加及认证数量为1或0时，借款金额分布呈现倾斜带状分布且斜率大致相同。
+6）以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间。
+7）以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间；上述结论在不同的初始评级水平中保持一致。
+8）以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间；上述结论在不同的认证数量水平中保持一致。
+9）以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。
+10）以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。上述结论在初始评级水平为AA、B、C、D中保持一致,在其余初始评级水平大致保持一致。
+11）以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。上述结论在认证数量为1、2、3、4中保持一致,在其余认证数量大致保持一致。
+12）以借款金额/历史逾期还款期数的比值为X轴，以借款金额/总待还本金的比值为Y轴，绘制密度分布图。密度图呈现垂直带状分布特点，即数据集中在x<1250且y<1范围内。
+
+### 这些特性之间是否存在有趣或惊人的联系呢？
+1）以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间。
+2）以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。
+3）以借款金额/历史逾期还款期数的比值为X轴，以借款金额/总待还本金的比值为Y轴，绘制密度分布图。密度图呈现垂直带状分布特点，即数据集中在x<1250且y<1范围内。
+
+### 选项：你是否创建过数据集的任何模型？讨论你模型的优缺点。
+否
+------
+
+# 定稿图与总结
+
+### 绘图一
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                               0.97)) & 
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,
+                                                0.97))),
+       aes(x=`总待还本金`,y=`借款金额`/ `总待还本金`))+
+  geom_point(size=0.5)+
+  scale_y_continuous(breaks = seq(0,40,2),limits =c(0,40))+
+  scale_x_continuous(breaks = seq(0,17500,2500),limits =c(0,17500))+
+  geom_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 1,color="green")+
+  geom_vline(xintercept = 2500,color="green")+
+  labs(
+    x = "总待还本金 (元)",
+    y = "借款金额/总待还本金",
+    title = "借款金额/总待还本金——总待还本金"
+  )+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+### 描述一
+
+以总待还本金为X轴，以借款金额/总待还本金的比值为Y轴；当总待还本金范围为0-2500，比值从12以曲线方式降为2；当总待还本金范围为2500-15000，比值维持直线形式为1-2之间。
+
+### 绘图二
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`历史逾期还款期数`,y=`借款金额`/ `历史逾期还款期数`))+
+  geom_point(size=0.5)+
+  coord_cartesian(ylim = c(0,2500))+
+  scale_y_continuous(breaks = seq(0,22500,50),limits =c(0,22500))+
+  scale_x_continuous(breaks = seq(0,30,1),limits =c(0,30))+
+  stat_smooth(method = "auto",color="red")+
+  geom_hline(yintercept = 200,color="green")+
+  labs(
+    x = "历史逾期还款期数(期)",
+    y = "借款金额/历史逾期还款期数",
+    title = "借款金额/历史逾期还款期数——历史逾期还款期数"
+  )+
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+### 描述二
+
+以历史逾期还款期数为X轴，以借款金额/历史逾期还款期数的比值为Y轴；当历史逾期还款期数范围为1-4，比值从以曲线方式降为450；当历史逾期还款期数范围为5-11，比值呈现曲线波峰，比值最高为1150，最低为100；当历史逾期还款期数范围为11-18，比值呈现曲线波峰，比值最高为550，最低为200；当历史逾期还款期数范围为18-30，比值维持直线形式为200。
+
+### 绘图三
+```{r}
+ggplot(data=subset(lcis.ana,
+                   (lcis.ana$`历史逾期还款期数`< 30) &
+                     (lcis.ana$`历史逾期还款期数`> 0) &
+                     (lcis.ana$`总待还本金`< quantile(lcis.ana$`总待还本金`,
+                                                 0.97)) &
+                     (lcis.ana$`总待还本金`> 0) &
+                     (lcis.ana$`借款金额`< quantile(lcis.ana$`借款金额`,0.97))),
+       aes(x=`借款金额`/ `历史逾期还款期数`,y=`借款金额`/ `总待还本金`))+
+  geom_jitter(size=0.5,color="lightblue")+
+  coord_cartesian(ylim = c(0,10),xlim = c(0,10000))+
+  scale_y_continuous(breaks = seq(0,10,0.5))+
+  scale_x_continuous(breaks = seq(0,10000,250))+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))+
+  geom_density_2d()+
+  stat_density2d(aes(alpha = ..density..), geom = "raster", contour = FALSE)+
+   labs(
+    x = "借款金额/历史逾期还款期数",
+    y = "借款金额/总待还本金",
+    title = "借款金额/总待还本金——借款金额/历史逾期还款期数"
+  )+
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+### 描述三
+
+以借款金额/历史逾期还款期数的比值为X轴，以借款金额/总待还本金的比值为Y轴，绘制密度分布图。密度图呈现垂直带状分布特点，即数据集中在x<1250且y<1范围内。
+
+------
+
+# 反思
+这是一个非常具有挑战性的数据集。主要的难点是分析变量多、各变量存在相互影响、数据关系相对复杂。分析探索的过程中，我的探索的目标在根据探索过程的深入在不断的变化与调整。在对数据集进行单变量的分析后，我想探索怎样预测哪些人群为逾期人群。但在探索双变量与多变量的过程中发现难以找出对应的关系去建模进行预测。在探索多变量时，发现借款金额与总待还本金、历史逾期还款期数、认证数量、初始评级、借款类型的相关限制性影响，因此将探索兴趣点确定为“借款金额受哪些因素的影响”。
+我觉得自己的分析与探索深度很有限。有趣的是看到借款金额与总待还本金、历史逾期还款期数、认证数量、初始评级、借款类型的相关限制性影响，可能这是作为贷款公司控制风险有效的措施，但是我的分析中缺乏对于借款人本身的用户特点而造成借款金额影响的分析。
+总结再次进行数据分析的工作方式：
+1. 充分掌握数据特点
+2. 仔细了解数据集结构与数据类型
+3. 单变量分析：立足兴趣点，从数据角度探索变量
+4. 双变量分析：基于探索方向，挖掘变量与变量的关系
+5. 多变量分析：多维度剖析变量
